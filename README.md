@@ -8,7 +8,7 @@
 - `main.py`: κύριο entry point και όλες οι παράμετροι εκτέλεσης.
 - `send_packets.py`: κατασκευή payloads, TCP αποστολή, parsing απαντήσεων και
   διαχείριση sequence/transmission numbers.
-- `close_batch_range.py`: διαβάζει τις εκκρεμείς sales από το
+- `close_remaining_batches.py`: διαβάζει τις εκκρεμείς sales από το
   `sales_transmitted.json` και κλείνει σειριακά όλα τα batches.
 - `sales_transmitted.json`: ιστορικό των sales που δεν έχουν κλείσει ακόμη.
 - `last_TRX.json`: μόνιμος μετρητής της τελευταίας sale, ώστε η αρίθμηση να
@@ -26,7 +26,7 @@ python main.py
 Για κλείσιμο των sales που υπάρχουν ήδη στο JSON:
 
 ```bash
-python close_batch_range.py
+python close_remaining_batches.py
 ```
 
 ## Κύριες παράμετροι (`main.py`)
@@ -50,7 +50,7 @@ INCREMENT_BATCH_PER_SALE = True
 
 Η `send_sales()` δέχεται `delay` μεταξύ διαδοχικών sales. Η
 `close_batches()` δέχεται επίσης `delay`, αλλά αυτό εφαρμόζεται μόνο όταν
-`parallel=False`. Στο `close_batch_range.py` τα closes εκτελούνται σειριακά.
+`parallel=False`. Στο `close_remaining_batches.py` τα closes εκτελούνται σειριακά.
 
 ## Sequence και transmission
 
@@ -96,7 +96,7 @@ sales επί `AMOUNT`.
 
 - Το `transmission_number` είναι δύο ψηφία· τιμή όπως `300` δεν είναι έγκυρη
   για το συγκεκριμένο SPDH payload.
-- Τα CLOSE BATCH requests του `close_batch_range.py` στέλνονται ένα-ένα με
+- Τα CLOSE BATCH requests του `close_remaining_batches.py` στέλνονται ένα-ένα με
   `DELAY_SECONDS` μεταξύ τους.
 - Μην διαγράφετε το `last_TRX.json` αν θέλετε να συνεχιστεί η αρίθμηση από τις
   τελευταίες τιμές.
