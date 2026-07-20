@@ -1,35 +1,34 @@
 # Batch Stress Test
 
-Το project στέλνει SPDH sales μέσω TCP και στη συνέχεια κλείνει τα batches
-με CLOSE BATCH requests.
+This project sends SPDH sales over TCP and then closes the corresponding
+batches with CLOSE BATCH requests.
 
-## Αρχεία
+## Files
 
-- `main.py`: κύριο entry point και όλες οι παράμετροι εκτέλεσης.
-- `send_packets.py`: κατασκευή payloads, TCP αποστολή, parsing απαντήσεων και
-  διαχείριση sequence/transmission numbers.
-- `close_remaining_batches.py`: διαβάζει τις εκκρεμείς sales από το
-  `sales_transmitted.json` και κλείνει σειριακά όλα τα batches.
-- `sales_transmitted.json`: ιστορικό των sales που δεν έχουν κλείσει ακόμη.
-- `last_TRX.json`: μόνιμος μετρητής της τελευταίας sale, ώστε η αρίθμηση να
-  συνεχίζεται ακόμη κι αν διαγραφεί το ιστορικό.
+- `main.py`: main entry point and runtime configuration.
+- `send_packets.py`: payload construction, TCP transport, response parsing,
+  sequence/transmission tracking, and sale sending.
+- `close_remaining_batches.py`: reads pending sales from
+  `sales_transmitted.json` and closes their batches sequentially.
+- `sales_transmitted.json`: sales that have not been closed yet.
+- `last_TRX.json`: persistent counter for the last transmitted transaction.
 
-## Εκτέλεση
+## Running
 
 ```bash
 python main.py
 ```
 
-Το `main.py` καλεί πρώτα τη `send_sales()` και, μετά από καθυστέρηση ενός
-δευτερολέπτου, τη `close_batches()`.
+`main.py` first calls `send_sales()` and then, after a one-second pause, calls
+`close_batches()`.
 
-Για κλείσιμο των sales που υπάρχουν ήδη στο JSON:
+To close batches already recorded in the JSON file:
 
 ```bash
 python close_remaining_batches.py
 ```
 
-## Κύριες παράμετροι (`main.py`)
+## Configuration (`main.py`)
 
 ```python
 HOST = "10.1.110.84"
@@ -41,36 +40,33 @@ TRANSACTION_COUNT = 5
 INCREMENT_BATCH_PER_SALE = True
 ```
 
-- `TIMEOUT`: μέγιστος χρόνος αναμονής TCP απάντησης, σε δευτερόλεπτα.
-- `AMOUNT`: ποσό κάθε sale σε minor currency units.
-- `TRANSACTION_COUNT`: αριθμός sales.
-- `INCREMENT_BATCH_PER_SALE=False`: όλες οι sales χρησιμοποιούν το ίδιο
-  batch.
-- `INCREMENT_BATCH_PER_SALE=True`: κάθε sale παίρνει batch αυξημένο κατά 1.
+`TIMEOUT` is the maximum TCP response wait in seconds. `AMOUNT` is the sale
+amount in minor currency units. `INCREMENT_BATCH_PER_SALE=False` sends all
+sales in one batch; `True` increments the batch for every sale.
 
-Η `send_sales()` δέχεται `delay` μεταξύ διαδοχικών sales. Η
-`close_batches()` δέχεται επίσης `delay`, αλλά αυτό εφαρμόζεται μόνο όταν
-`parallel=False`. Στο `close_remaining_batches.py` τα closes εκτελούνται σειριακά.
+`send_sales()` accepts a delay between sales. `close_batches()` also accepts a
+delay, but it is applied only when `parallel=False`. The remaining-batches
+script sends closes sequentially.
 
-## Sequence και transmission
+## Sequence and transmission numbers
 
-Ένα sequence έχει τη μορφή:
+A sequence has the form:
 
 ```text
 001 | 531 | 4750
 shift | batch field | suffix
 ```
 
-Το TANGO εμφανίζει το batch με αρχικό `1`, άρα το `001531....` αντιστοιχεί
-στο batch `1531`. Το sequence αυξάνεται κατά 10 και το transmission number
-κατά 1 (δύο ψηφία, `00` έως `99`, με rollover).
+TANGO displays the batch with a leading `1`, so `001531....` represents batch
+`1531`. The sequence increases by 10 and the transmission number increases by
+1. Transmission numbers use two digits (`00`–`99`) and roll over.
 
-Το `last_TRX.json` ενημερώνεται σε κάθε reservation και είναι η πηγή για την
-επόμενη αρίθμηση.
+`last_TRX.json` is updated for every reservation and provides the next values,
+even if the sales history file is deleted.
 
-## `sales_transmitted.json`
+## Sales history
 
-Το αρχείο περιέχει array εγγραφών, μία ανά sale:
+`sales_transmitted.json` is an array with one entry per sale:
 
 ```json
 [
@@ -84,19 +80,15 @@ shift | batch field | suffix
 ]
 ```
 
-Η `approved` είναι `true` για response code `000` ή `001` και `false` για
-αποτυχία/timeout. Στο CLOSE BATCH κάθε επιτυχημένη sale μετράει ως 1 και
-κάθε αποτυχημένη ως 0. Το συνολικό ποσό είναι το πλήθος των επιτυχημένων
-sales επί `AMOUNT`.
+`approved` is `true` for response codes `000` and `001`, and `false` for a
+failure or timeout. In a CLOSE BATCH, approved sales count as 1 and failed
+sales count as 0. The total amount is the approved count multiplied by
+`AMOUNT`.
 
-Με επιτυχημένο CLOSE BATCH διαγράφονται από το JSON όλες οι sales του
-συγκεκριμένου batch. Σε αποτυχία παραμένουν για επανάληψη.
+After a successful CLOSE BATCH, all sales belonging to that batch are removed
+from `sales_transmitted.json`. On failure they remain for retry.
 
-## Σημειώσεις
+## Notes
 
-- Το `transmission_number` είναι δύο ψηφία· τιμή όπως `300` δεν είναι έγκυρη
-  για το συγκεκριμένο SPDH payload.
-- Τα CLOSE BATCH requests του `close_remaining_batches.py` στέλνονται ένα-ένα με
-  `DELAY_SECONDS` μεταξύ τους.
-- Μην διαγράφετε το `last_TRX.json` αν θέλετε να συνεχιστεί η αρίθμηση από τις
-  τελευταίες τιμές.
+- `transmission_number` is two digits; `300` is not valid for this payload.
+- Do not delete `last_TRX.json` if numbering must continue from the last values.
