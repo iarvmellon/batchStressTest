@@ -1,0 +1,3 @@
+__pycache__/
+.packet_state.json
+.packet_state.json.tmp
