@@ -20,61 +20,61 @@ an SPDH flooding condition at the TANGO endpoint.
 
 ## Observed behavior
 
-The first approximately 100–150 CLOSE BATCH requests were processed normally.
-After that point, TANGO stopped returning a response for subsequent requests.
-Those requests therefore timed out or returned an empty response, and the
-corresponding CLOSE BATCH operations were not completed.
+Initially, all CLOSE BATCH requests shown on Page 9 were processed
+successfully. The problem first appears on Page 8 and remains visible on Pages
+6 and 5. On Pages 1–4, the system was unable to complete any CLOSE BATCH
+operation.
 
 ## Progressive observations
 
-The following page references document the progression of the run:
+The report pages are listed below in chronological order of the observed
+behavior:
 
+- [Page 9 — all CLOSE BATCH operations successful](#page-9--all-close-batch-operations-successful)
+- [Page 8 — problem begins](#page-8--problem-begins)
+- [Pages 6 and 5 — problem continues](#pages-6-and-5--problem-continues)
 - [Pages 1–4 — no CLOSE BATCH completed](#pages-14--no-close-batch-completed)
-- [Pages 5–7 — CLOSE BATCH activity begins](#pages-57--close-batch-activity-begins)
-- [Page 8 — first visible failure](#page-8--first-visible-failure)
-- [Pages 9 onward — empty responses and failed closes](#pages-9-onward--empty-responses-and-failed-closes)
+
+### Page 9 — all CLOSE BATCH operations successful
+
+All CLOSE BATCH operations shown on Page 9 were completed successfully.
+
+![Page 9 — all CLOSE BATCH operations successful](images/Page_9.PNG)
+
+*Page 9 — successful CLOSE BATCH operations before the problem appears.*
+
+### Page 8 — problem begins
+
+The problem first becomes visible on Page 8. From this point, the endpoint
+begins showing signs of overload and CLOSE BATCH processing becomes unreliable.
+
+![Page 8 — problem begins](images/Page_8.PNG)
+
+*Page 8 — the first visible CLOSE BATCH problem.*
+
+### Pages 6 and 5 — problem continues
+
+The CLOSE BATCH problem remains present on Pages 6 and 5.
+
+![Page 6 — CLOSE BATCH problem continues](images/Page_6.PNG)
+
+*Page 6 — unsuccessful or incomplete CLOSE BATCH processing continues.*
+
+![Page 5 — CLOSE BATCH problem continues](images/Page_5.PNG)
+
+*Page 5 — the CLOSE BATCH problem remains visible.*
 
 ### Pages 1–4 — no CLOSE BATCH completed
 
-The initial pages contain the sales activity, but no CLOSE BATCH operation was
-completed during this part of the run.
-
-### Pages 5–7 — CLOSE BATCH activity begins
-
-CLOSE BATCH requests start appearing as the system begins processing the batch
-closing phase.
-
-![Page 5 — CLOSE BATCH activity begins](images/Page_5.PNG)
-
-*Page 5 — CLOSE BATCH requests begin to appear.*
-
-![Page 6 — CLOSE BATCH processing continues](images/Page_6.PNG)
-
-*Page 6 — CLOSE BATCH processing continues.*
-
-### Page 8 — first visible failure
-
-The first clear failure appears on Page 8. From this point, the endpoint begins
-showing signs of overload and responses become unreliable.
-
-![Page 8 — first visible failure](images/Page_8.PNG)
-
-*Page 8 — the first visible failure during the batch-closing phase.*
-
-### Pages 9 onward — empty responses and failed closes
-
-Subsequent pages show missing or empty SPDH responses. The associated CLOSE
-BATCH requests do not complete successfully.
-
-![Page 9 — empty responses and failed closes](images/Page_9.PNG)
-
-*Page 9 — empty SPDH responses and unsuccessful CLOSE BATCH operations.*
+On Pages 1–4, the system was unable to complete any CLOSE BATCH operation.
 
 ## Conclusion
 
 Sending hundreds of CLOSE BATCH requests concurrently is not reliable for this
-endpoint. The observed failure is consistent with request flooding or device
-overload rather than a payload-generation problem.
+endpoint. Although the CLOSE BATCH operations on Page 9 succeeded, failures
+started appearing on Page 8, continued on Pages 6 and 5, and eventually no
+batches were closed on Pages 1–4. This behavior is consistent with request
+flooding or device overload rather than a payload-generation problem.
 
 ## Recommended execution mode
 
