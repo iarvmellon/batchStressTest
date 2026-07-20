@@ -92,3 +92,19 @@ from `sales_transmitted.json`. On failure they remain for retry.
 
 - `transmission_number` is two digits; `300` is not valid for this payload.
 - Do not delete `last_TRX.json` if numbering must continue from the last values.
+
+## Closing pending batches
+
+The normal workflow is to run `main.py`. It sends the sales first and then
+closes the pending batches. When closing a large number of batches (for
+example, approximately 355 CLOSE BATCH requests), the SPDH endpoint may stop
+returning data after roughly 100 requests and the socket response can be
+empty. This is an endpoint/device limitation or overload condition, not an
+indication that the Python process failed.
+
+Use `close_remaining_batches.py`. Unlike a burst/parallel
+close, this script sends the CLOSE BATCH requests sequentially and inserts a
+delay between them. This avoids flooding SPDH and prevents the endpoint from
+returning empty responses. If a request fails, its batch remains in
+`sales_transmitted.json`; successful closes are removed automatically and can
+therefore be retried safely.
