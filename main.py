@@ -13,7 +13,7 @@ PORT = 28420
 TIMEOUT = 5.0
 TID = "00000006"
 AMOUNT = "0001"
-TRANSACTION_COUNT = 3
+TRANSACTION_COUNT = 355
 INCREMENT_BATCH_PER_SALE = True
 STATE = Path(STATE_FILE)
 
@@ -75,11 +75,14 @@ def close_batches(host, port, timeout, tid, amount, delay=0.0,
                 time.sleep(delay)
             results.append(send(request))
 
-    successful = {sequence for sequence, ok in results if ok}
-    if successful:
+    successful_batches = {sequence[3:6] for sequence, ok in results if ok}
+    if successful_batches:
         state_data = json.loads(STATE.read_text(encoding="utf-8"))
         history = state_data if isinstance(state_data, list) else state_data.get("history", [])
-        remaining = [e for e in history if e.get("sequence_number") not in successful]
+        remaining = [
+            e for e in history
+            if e.get("sequence_number", "")[3:6] not in successful_batches
+        ]
         STATE.write_text(json.dumps(remaining, indent=2) + "\n", encoding="utf-8")
 
 
@@ -92,7 +95,7 @@ def main():
     time.sleep(1.0)
     
     close_batches(HOST, PORT, TIMEOUT, TID, AMOUNT, delay=1.0,
-                  parallel=False)
+                  parallel=True)
 
 
 if __name__ == "__main__":

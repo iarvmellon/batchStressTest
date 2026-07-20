@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-STATE_FILE = Path(__file__).with_name(".packet_state.json")
-LAST_PACKET_FILE = Path(__file__).with_name("last_packet.json")
+STATE_FILE = Path(__file__).with_name("sales_transmitted.json")
+LAST_PACKET_FILE = Path(__file__).with_name("last_TRX.json")
 
 RESPONSE_CODES = {
     "000": "Approved",
