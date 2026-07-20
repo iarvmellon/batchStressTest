@@ -44,15 +44,31 @@ completed during this part of the run.
 CLOSE BATCH requests start appearing as the system begins processing the batch
 closing phase.
 
+![Page 5 — CLOSE BATCH activity begins](images/Page_5.PNG)
+
+*Page 5 — CLOSE BATCH requests begin to appear.*
+
+![Page 6 — CLOSE BATCH processing continues](images/Page_6.PNG)
+
+*Page 6 — CLOSE BATCH processing continues.*
+
 ### Page 8 — first visible failure
 
 The first clear failure appears on Page 8. From this point, the endpoint begins
 showing signs of overload and responses become unreliable.
 
+![Page 8 — first visible failure](images/Page_8.PNG)
+
+*Page 8 — the first visible failure during the batch-closing phase.*
+
 ### Pages 9 onward — empty responses and failed closes
 
 Subsequent pages show missing or empty SPDH responses. The associated CLOSE
 BATCH requests do not complete successfully.
+
+![Page 9 — empty responses and failed closes](images/Page_9.PNG)
+
+*Page 9 — empty SPDH responses and unsuccessful CLOSE BATCH operations.*
 
 ## Conclusion
 
