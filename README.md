@@ -15,6 +15,12 @@ batches with CLOSE BATCH requests.
 
 ## Running
 
+Before running the test, verify that `last_TRX.json` contains the correct
+values for the last transaction sent to UAT. In particular, check
+`sequence_number`, `transmission_number`, and `batch_number`. The application
+uses these persisted values to calculate the numbers for the next transaction;
+incorrect values can cause duplicate transactions or sequence errors.
+
 ```bash
 python main.py
 ```

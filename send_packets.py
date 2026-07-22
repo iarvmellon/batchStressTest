@@ -191,10 +191,16 @@ def reserve_message_numbers(
     initial_transmission_number: str,
     *,
     record: bool = True,
+    increment_batch: bool = False,
 ) -> tuple[str, str]:
     state = load_state(state_file, initial_sequence_number, initial_transmission_number)
     sequence_number = state["next_sequence_number"]
     transmission_number = state["next_transmission_number"]
+    if increment_batch:
+        next_batch_number = int(sequence_number[3:6]) % 999 + 1
+        sequence_number = (
+            f"{sequence_number[:3]}{next_batch_number:03d}{sequence_number[6:]}"
+        )
     next_sequence_suffix = int(sequence_number[6:]) + 10
     sequence_width = len(sequence_number) - 6
     # Sequence suffixes roll over when the fixed-width field is exhausted.
@@ -438,20 +444,12 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
 
     sale_results = []
     for attempt in range(nof_trx):
-        sequence_number, transmission_number = reserve_message_numbers(state_file, initial_sequence_number, initial_transmission_number)
-        if increment_batch_per_sale:
-            batch = (int(initial_sequence_number[3:6]) + attempt) % 1000
-            suffix = (int(initial_sequence_number[6:]) + attempt * 10) % 10000
-            sequence_number = f"{sequence_number[:3]}{batch:03d}{suffix:04d}"
-            try:
-                recorded = json.loads(state_file.read_text(encoding="utf-8"))
-                if isinstance(recorded, list) and recorded:
-                    recorded[-1]["sequence_number"] = sequence_number
-                    recorded[-1]["batch_number"] = "1" + f"{batch:03d}"
-                    state_file.write_text(json.dumps(recorded, indent=2) + "\n", encoding="utf-8")
-            except (OSError, json.JSONDecodeError):
-                pass
-            increment_batch_number(state_file, initial_sequence_number, initial_transmission_number)
+        sequence_number, transmission_number = reserve_message_numbers(
+            state_file,
+            initial_sequence_number,
+            initial_transmission_number,
+            increment_batch=increment_batch_per_sale,
+        )
         print(
             f"[{attempt + 1:03d}/{nof_trx}] "
             f"Sending transmission={transmission_number} sequence={sequence_number}",
