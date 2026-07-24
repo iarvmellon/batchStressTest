@@ -190,6 +190,7 @@ def main():
         return closed
 
     print(f"Starting {len(TIDS)} CLOSE BATCH threads", flush=True)
+    close_started_at = time.perf_counter()
     with ThreadPoolExecutor(max_workers=len(TIDS)) as executor:
         futures = {
             executor.submit(close_tid, tid, sales): tid
@@ -206,6 +207,11 @@ def main():
                 )
             except Exception as exc:
                 print(f"TID={tid} CLOSE worker failed: {exc}", flush=True)
+    close_elapsed = time.perf_counter() - close_started_at
+    print(
+        f"All CLOSE BATCH workers completed in {close_elapsed:.2f} seconds",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

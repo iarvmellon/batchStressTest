@@ -88,10 +88,13 @@ def main() -> None:
         f"Closing {len(history)} pending batches sequentially",
         flush=True,
     )
+    close_started_at = time.perf_counter()
     closed, remaining = close_pending_sales(history)
+    close_elapsed = time.perf_counter() - close_started_at
 
     print(
-        f"Close completed: closed={closed}, remaining={remaining}",
+        f"Close completed: closed={closed}, remaining={remaining}, "
+        f"elapsed={close_elapsed:.2f} seconds",
         flush=True,
     )
 
