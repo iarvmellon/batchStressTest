@@ -536,6 +536,11 @@ def send_one_packet(
 ) -> dict[str, str]:
     payload = build_payload(sequence_number, transmission_number, tid, amount)
     with socket.create_connection((host, port), timeout=timeout) as sock:
+        source_ip, source_port = sock.getsockname()[:2]
+        print(
+            f"SALE TID={tid} source={source_ip}:{source_port}",
+            flush=True,
+        )
         sock.sendall(payload)
         sock.settimeout(timeout)
         response = sock.recv(4096)
@@ -572,6 +577,11 @@ def send_close_batch(
         flush=True,
     )
     with socket.create_connection((host, port), timeout=timeout) as sock:
+        source_ip, source_port = sock.getsockname()[:2]
+        print(
+            f"CLOSE BATCH TID={tid} source={source_ip}:{source_port}",
+            flush=True,
+        )
         sock.sendall(payload)
         sock.settimeout(timeout)
         response = sock.recv(4096)
