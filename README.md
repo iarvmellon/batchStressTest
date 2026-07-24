@@ -40,10 +40,13 @@ python main.py
 
 SALE requests are sent sequentially. The program sends `TRANSACTION_COUNT`
 requests for each entry in `TIDS`, with a short delay between requests and
-between TIDs.
+between TIDs. After all SALE requests have completed, `main.py` starts one
+CLOSE BATCH worker per TID. Each worker closes that TID's batches
+sequentially, while workers for different TIDs run concurrently.
 
-The CLOSE BATCH worker block in `main.py` is currently commented out. Use the
-dedicated script described below to close entries in `sales_transmitted.json`.
+Only successfully closed entries are removed from `sales_transmitted.json`.
+Use the dedicated script described below to retry any entries that remain
+pending after the main run.
 
 ## Next transaction per TID
 
@@ -80,9 +83,9 @@ send:  0015480210
 store: 0015490220
 ```
 
-If TANGO rejects the transmission/sequence with response code `899` or an
-equivalent invalid-sequence message, the rejected SALE is removed from
-`sales_transmitted.json` and the next values are not advanced.
+Every transmitted SALE is recorded in `sales_transmitted.json`. Its entry
+remains there while the corresponding batch is pending and is removed only
+after that batch receives a successful CLOSE BATCH response (`000`).
 
 ## Sequence format
 
@@ -121,7 +124,7 @@ by one.
 ]
 ```
 
-`approved` is `true` for response codes `000` and `001`, and `false` for a
+`approved` is `true` for response codes `000` for a
 failure or timeout. An approved SALE contributes a count of 1 to CLOSE BATCH;
 an unapproved SALE contributes 0. The total amount is the approved count
 multiplied by `AMOUNT`.
@@ -131,7 +134,7 @@ Each pending SALE is identified by the combination of `tid` and
 its own CLOSE BATCH receives the successful response code `000`. Exactly one
 matching entry is removed.
 
-If CLOSE BATCH returns any other response code (including `001`), times out,
+If CLOSE BATCH returns any other response code , times out,
 or encounters a socket error, the SALE remains in `sales_transmitted.json` so
 it can be retried. This also prevents a successful CLOSE for one TID from
 deleting a failed pending SALE belonging to another TID with the same sequence
@@ -146,6 +149,11 @@ python close_remaining_batches.py
 The script reads `sales_transmitted.json` and closes pending batches
 sequentially, with a delay between requests. Each request uses the TID stored
 in its SALE entry. Legacy entries without a TID use `DEFAULT_TID`.
+
+For CLOSE BATCH responses, only response code `000` is considered successful.
+Every other response code are treated as failures. The
+corresponding SALE remains in `sales_transmitted.json` for retry, as it does
+after a timeout or socket error.
 
 Sequential closing is recommended for large pending histories because the SPDH
 endpoint can stop returning data when it receives a large burst of CLOSE BATCH

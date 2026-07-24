@@ -366,12 +366,11 @@ def snapshot_tid_state(tid: str):
 
 
 def rollback_rejected_reservation(
-    state_file: Path,
     tid: str,
     rejected_sequence: str,
     previous_tid_state,
 ) -> None:
-    """Undo counters/history when TANGO rejects a transmission sequence."""
+    """Restore counters while keeping the transmitted SALE in the history."""
     with STATE_LOCK:
         current = RUNTIME_TID_STATES.get(tid)
         if current and current.get("sequence_number") == rejected_sequence:
@@ -379,25 +378,6 @@ def rollback_rejected_reservation(
                 RUNTIME_TID_STATES.pop(tid, None)
             else:
                 RUNTIME_TID_STATES[tid] = previous_tid_state
-
-        try:
-            recorded = json.loads(state_file.read_text(encoding="utf-8"))
-            history = recorded if isinstance(recorded, list) else recorded.get("history", [])
-            removed = False
-            remaining = []
-            for entry in reversed(history):
-                if (
-                    not removed
-                    and entry.get("tid") == tid
-                    and entry.get("sequence_number") == rejected_sequence
-                ):
-                    removed = True
-                    continue
-                remaining.append(entry)
-            remaining.reverse()
-            save_state({"history": remaining}, state_file)
-        except (OSError, json.JSONDecodeError):
-            pass
 
 
 def is_sequence_rejection(response: dict[str, str]) -> bool:
@@ -650,7 +630,6 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
             sequence_rejected = is_sequence_rejection(response)
             if sequence_rejected:
                 rollback_rejected_reservation(
-                    state_file,
                     tid,
                     sequence_number,
                     previous_tid_state,
