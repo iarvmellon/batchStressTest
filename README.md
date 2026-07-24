@@ -128,13 +128,14 @@ multiplied by `AMOUNT`.
 
 Each pending SALE is identified by the combination of `tid` and
 `sequence_number`. A SALE is removed from `sales_transmitted.json` only when
-its own CLOSE BATCH receives a successful response (`000` or `001`). Exactly
-one matching entry is removed.
+its own CLOSE BATCH receives the successful response code `000`. Exactly one
+matching entry is removed.
 
-If CLOSE BATCH returns any other response code, times out, or encounters a
-socket error, the SALE remains in `sales_transmitted.json` so it can be
-retried. This also prevents a successful CLOSE for one TID from deleting a
-failed pending SALE belonging to another TID with the same sequence number.
+If CLOSE BATCH returns any other response code (including `001`), times out,
+or encounters a socket error, the SALE remains in `sales_transmitted.json` so
+it can be retried. This also prevents a successful CLOSE for one TID from
+deleting a failed pending SALE belonging to another TID with the same sequence
+number.
 
 ## Closing pending batches
 

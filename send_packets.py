@@ -597,7 +597,7 @@ def send_close_batch(
         response = sock.recv(4096)
 
     print(f"CLOSE BATCH response: {response_summary(response)}", flush=True)
-    return parse_spdh(response).get("response_code") in {"000", "001"}
+    return parse_spdh(response).get("response_code") == "000"
 
 
 def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,

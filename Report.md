@@ -33,13 +33,13 @@ were observed. All pending batches were closed without a problem.
 Each pending SALE in `sales_transmitted.json` is identified by the combination
 of its `tid` and `sequence_number`. The application removes exactly one
 matching entry only after its CLOSE BATCH receives a successful response code
-(`000` or `001`).
+(`000`).
 
-If CLOSE BATCH returns another response code, times out, or encounters a socket
-error, the SALE is not removed. It remains pending in `sales_transmitted.json`
-so it can be retried. Matching on both fields prevents a successful CLOSE for
-one TID from deleting a failed pending SALE belonging to another TID with the
-same sequence number.
+If the CLOSE BATCH response code is any value other than `000` , the SALE is not removed. The same applies when the request times out or
+encounters a socket error. In all these cases, the SALE remains pending in
+`sales_transmitted.json` so it can be retried. Matching on both fields prevents
+a successful CLOSE for one TID from deleting a failed pending SALE belonging
+to another TID with the same sequence number.
 
 ## Conclusion
 
