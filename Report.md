@@ -80,5 +80,18 @@ flooding or device overload rather than a payload-generation problem.
 
 CLOSE BATCH requests should be sent sequentially with a delay between them.
 This avoids flooding the endpoint and allows each response to be received before
-the next request is transmitted. Failed batches should remain pending so they
-can be retried after the endpoint has recovered.
+the next request is transmitted.
+
+## Pending transaction handling
+
+Each pending SALE in `sales_transmitted.json` is identified by the combination
+of its `tid` and `sequence_number`. The application removes exactly one
+matching entry only after its CLOSE BATCH receives a successful response code
+(`000` or `001`).
+
+If CLOSE BATCH returns another response code, times out, or encounters a socket
+error, the SALE is not removed. It remains pending in `sales_transmitted.json`
+and can be retried after the endpoint has recovered. Matching on both fields is
+important because different TIDs can use the same sequence number; therefore,
+a successful CLOSE for one TID must not delete a failed pending SALE belonging
+to another TID.

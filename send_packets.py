@@ -6,9 +6,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 STATE_FILE = Path(__file__).with_name("sales_transmitted.json")
-LAST_PACKET_FILE = Path(__file__).with_name("last_TRX.json")
+NEXT_PACKET_FILE = Path(__file__).with_name("next_TRX_per_TID.json")
+STATE_LOCK = threading.RLock()
+RUNTIME_TID_STATES = {}
 
 RESPONSE_CODES = {
     "000": "Approved",
@@ -113,20 +116,6 @@ def load_state(
     initial_sequence_number: str,
     initial_transmission_number: str,
 ) -> dict[str, str]:
-    if LAST_PACKET_FILE.exists():
-        try:
-            last = json.loads(LAST_PACKET_FILE.read_text(encoding="utf-8"))
-            seq = last["sequence_number"]
-            return {
-                "next_sequence_number": f"{seq[:6]}{(int(seq[6:]) + 10) % 10000:04d}",
-                "next_transmission_number": f"{(int(last['transmission_number']) + 1) % 100:02d}",
-                "history": (
-                    json.loads(state_file.read_text(encoding="utf-8"))
-                    if state_file.exists() else []
-                ),
-            }
-        except (OSError, json.JSONDecodeError, KeyError, ValueError):
-            pass
     if not state_file.exists():
         return {
             "next_sequence_number": initial_sequence_number,
@@ -167,6 +156,31 @@ def save_state(state: dict[str, str], state_file: Path = STATE_FILE) -> None:
     temporary_file.replace(state_file)
 
 
+def remove_pending_sale(
+    state_file: Path,
+    sequence_number: str,
+    tid: Optional[str],
+) -> bool:
+    """Remove one SALE only after its own TID/sequence CLOSE succeeds."""
+    with STATE_LOCK:
+        recorded = json.loads(state_file.read_text(encoding="utf-8"))
+        history = recorded if isinstance(recorded, list) else recorded.get("history", [])
+        removed = False
+        remaining = []
+        for entry in history:
+            if (
+                not removed
+                and entry.get("sequence_number") == sequence_number
+                and entry.get("tid") == tid
+            ):
+                removed = True
+                continue
+            remaining.append(entry)
+        if removed:
+            save_state({"history": remaining}, state_file)
+        return removed
+
+
 def prepare_run_state(
     state_file: Path,
     initial_sequence_number: str,
@@ -185,38 +199,91 @@ def prepare_run_state(
     return state
 
 
-def reserve_message_numbers(
+def _reserve_message_numbers(
     state_file: Path,
     initial_sequence_number: str,
     initial_transmission_number: str,
     *,
     record: bool = True,
     increment_batch: bool = False,
+    tid=None,
 ) -> tuple[str, str]:
-    state = load_state(state_file, initial_sequence_number, initial_transmission_number)
-    sequence_number = state["next_sequence_number"]
-    transmission_number = state["next_transmission_number"]
-    if increment_batch:
-        next_batch_number = int(sequence_number[3:6]) % 999 + 1
+    state_key = tid or "default"
+    try:
+        recorded = json.loads(state_file.read_text(encoding="utf-8"))
+        history = recorded if isinstance(recorded, list) else recorded.get("history", [])
+    except (OSError, json.JSONDecodeError):
+        history = []
+
+    tid_state = RUNTIME_TID_STATES.get(state_key)
+    if tid_state is not None:
+        previous_sequence = tid_state["sequence_number"]
         sequence_number = (
-            f"{sequence_number[:3]}{next_batch_number:03d}{sequence_number[6:]}"
+            f"{previous_sequence[:6]}{(int(previous_sequence[6:]) + 10) % 10000:04d}"
         )
+        previous_transmission = tid_state["transmission_number"]
+        transmission_number = f"{(int(previous_transmission) + 1) % 100:02d}"
+        if increment_batch:
+            next_batch_number = int(sequence_number[3:6]) % 999 + 1
+            sequence_number = (
+                f"{sequence_number[:3]}{next_batch_number:03d}{sequence_number[6:]}"
+            )
+    else:
+        configured_state = None
+        try:
+            candidate = json.loads(NEXT_PACKET_FILE.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict):
+                configured_state = candidate.get("tids", {}).get(state_key)
+        except (OSError, json.JSONDecodeError):
+            pass
+        if configured_state:
+            # Values in next_TRX_per_TID.json are the exact next values to send.
+            sequence_number = configured_state["sequence_number"]
+            transmission_number = configured_state["transmission_number"]
+        else:
+            history_state = None
+            for entry in reversed(history):
+                if (entry.get("tid") or "default") == state_key:
+                    history_state = entry
+                    break
+            if history_state:
+                previous_sequence = history_state["sequence_number"]
+                sequence_number = (
+                    f"{previous_sequence[:6]}"
+                    f"{(int(previous_sequence[6:]) + 10) % 10000:04d}"
+                )
+                previous_transmission = history_state["transmission_number"]
+                transmission_number = f"{(int(previous_transmission) + 1) % 100:02d}"
+                if increment_batch:
+                    next_batch_number = int(sequence_number[3:6]) % 999 + 1
+                    sequence_number = (
+                        f"{sequence_number[:3]}{next_batch_number:03d}"
+                        f"{sequence_number[6:]}"
+                    )
+            else:
+                sequence_number = initial_sequence_number
+                transmission_number = initial_transmission_number
+
+    # SPDH transmission number is fixed to 00 for every SALE/CLOSE request.
+    transmission_number = "00"
     next_sequence_suffix = int(sequence_number[6:]) + 10
     sequence_width = len(sequence_number) - 6
-    # Sequence suffixes roll over when the fixed-width field is exhausted.
+    # Adding 10 advances the three-digit rcncltPrdId at positions 6..8,
+    # while the final sequence digit remains unchanged.
     next_sequence_suffix %= 10 ** sequence_width
     next_sequence_number = (
         f"{sequence_number[:6]}{next_sequence_suffix:0{sequence_width}d}"
     )
     next_transmission_number = f"{(int(transmission_number) + 1) % 100:02d}"
-    history = state.setdefault("history", [])
     if record:
-        history.append({
+        entry = {
             "sequence_number": sequence_number,
             "transmission_number": transmission_number,
-            "batch_number": "1" + sequence_number[3:6],
             "saved_at": datetime.now().isoformat(timespec="seconds"),
-        })
+        }
+        if tid is not None:
+            entry["tid"] = tid
+        history.append(entry)
     save_state(
         {
             "next_sequence_number": next_sequence_number,
@@ -225,12 +292,120 @@ def reserve_message_numbers(
         },
         state_file,
     )
-    LAST_PACKET_FILE.write_text(json.dumps({
+    RUNTIME_TID_STATES[state_key] = {
         "sequence_number": sequence_number,
         "transmission_number": transmission_number,
-        "batch_number": "1" + sequence_number[3:6],
-    }, indent=2) + "\n", encoding="utf-8")
+    }
     return sequence_number, transmission_number
+
+
+def reserve_message_numbers(
+    state_file: Path,
+    initial_sequence_number: str,
+    initial_transmission_number: str,
+    *,
+    record: bool = True,
+    increment_batch: bool = False,
+    tid=None,
+) -> tuple[str, str]:
+    """Reserve unique counters safely when multiple TID threads are running."""
+    with STATE_LOCK:
+        return _reserve_message_numbers(
+            state_file,
+            initial_sequence_number,
+            initial_transmission_number,
+            record=record,
+            increment_batch=increment_batch,
+            tid=tid,
+        )
+
+
+def save_next_sale_numbers(
+    tid: str,
+    sent_sequence_number: str,
+    *,
+    increment_batch: bool,
+) -> None:
+    """Persist the next SALE values after the current SALE has been executed."""
+    with STATE_LOCK:
+        next_suffix = (int(sent_sequence_number[6:]) + 10) % 10000
+        next_sequence = f"{sent_sequence_number[:6]}{next_suffix:04d}"
+        if increment_batch:
+            next_batch = int(next_sequence[3:6]) % 999 + 1
+            next_sequence = (
+                f"{next_sequence[:3]}{next_batch:03d}{next_sequence[6:]}"
+            )
+
+        try:
+            last = json.loads(NEXT_PACKET_FILE.read_text(encoding="utf-8"))
+            if not isinstance(last, dict):
+                last = {}
+        except (OSError, json.JSONDecodeError):
+            last = {}
+
+        tid_states = dict(last.get("tids", {}))
+        tid_states[tid] = {
+            "sequence_number": next_sequence,
+            "transmission_number": "00",
+        }
+        temporary_file = NEXT_PACKET_FILE.with_suffix(
+            NEXT_PACKET_FILE.suffix + ".tmp"
+        )
+        temporary_file.write_text(
+            json.dumps({"tids": tid_states}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_file.replace(NEXT_PACKET_FILE)
+
+
+def snapshot_tid_state(tid: str):
+    """Return a copy of the current in-process counters for one TID."""
+    with STATE_LOCK:
+        state = RUNTIME_TID_STATES.get(tid)
+        return dict(state) if state else None
+
+
+def rollback_rejected_reservation(
+    state_file: Path,
+    tid: str,
+    rejected_sequence: str,
+    previous_tid_state,
+) -> None:
+    """Undo counters/history when TANGO rejects a transmission sequence."""
+    with STATE_LOCK:
+        current = RUNTIME_TID_STATES.get(tid)
+        if current and current.get("sequence_number") == rejected_sequence:
+            if previous_tid_state is None:
+                RUNTIME_TID_STATES.pop(tid, None)
+            else:
+                RUNTIME_TID_STATES[tid] = previous_tid_state
+
+        try:
+            recorded = json.loads(state_file.read_text(encoding="utf-8"))
+            history = recorded if isinstance(recorded, list) else recorded.get("history", [])
+            removed = False
+            remaining = []
+            for entry in reversed(history):
+                if (
+                    not removed
+                    and entry.get("tid") == tid
+                    and entry.get("sequence_number") == rejected_sequence
+                ):
+                    removed = True
+                    continue
+                remaining.append(entry)
+            remaining.reverse()
+            save_state({"history": remaining}, state_file)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+
+def is_sequence_rejection(response: dict[str, str]) -> bool:
+    """Recognize TANGO responses that reject the transmission/sequence counters."""
+    text = response.get("message_text", "").lower()
+    return response.get("response_code") == "899" or (
+        "invalid" in text and ("transmission" in text or "sequence" in text)
+    )
 
 
 def increment_batch_number(
@@ -428,6 +603,7 @@ def send_close_batch(
 def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
                  nof_trx, tid, amount, delay_seconds=0.0,
                  close_batch_delay_seconds=0.0, send_close_batches=False,
+                 parallel_close_batches=True,
                  increment_batch_per_sale=False, initial_sequence_number,
                  initial_transmission_number) -> None:
     initial_state = prepare_run_state(state_file, initial_sequence_number, initial_transmission_number, increment_batch_per_sale)
@@ -436,7 +612,9 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
     print(
         f"Sending {nof_trx} packets to {host}:{port}, every {delay_seconds}s "
         f"with TID={tid}, shift={initial_sequence[:3]}, "
-        f"batch={initial_sequence[3:6]}, start_sequence={initial_sequence}, "
+        f"batch=1{initial_sequence[3:6]}, "
+        f"rcncltPrdId={initial_sequence[6:9]}, "
+        f"start_sequence={initial_sequence}, "
         f"start_transmission={initial_state['next_transmission_number']}, "
         f"amount={amount}",
         flush=True,
@@ -444,18 +622,23 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
 
     sale_results = []
     for attempt in range(nof_trx):
+        previous_tid_state = snapshot_tid_state(tid)
         sequence_number, transmission_number = reserve_message_numbers(
             state_file,
             initial_sequence_number,
             initial_transmission_number,
             increment_batch=increment_batch_per_sale,
+            tid=tid,
         )
         print(
             f"[{attempt + 1:03d}/{nof_trx}] "
-            f"Sending transmission={transmission_number} sequence={sequence_number}",
+            f"Sending transmission={transmission_number} "
+            f"sequence={sequence_number} batch=1{sequence_number[3:6]} "
+            f"rcncltPrdId={sequence_number[6:9]}",
             flush=True,
         )
         sale_approved = False
+        sequence_rejected = False
         try:
             response = send_one_packet(
                 host,
@@ -464,17 +647,33 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
                 sequence_number,
                 transmission_number, tid, amount,
             )
+            sequence_rejected = is_sequence_rejection(response)
+            if sequence_rejected:
+                rollback_rejected_reservation(
+                    state_file,
+                    tid,
+                    sequence_number,
+                    previous_tid_state,
+                )
+                print(
+                    f"SALE sequence={sequence_number} rejected by TANGO; "
+                    "restored previous counters",
+                    flush=True,
+                )
             sale_approved = response.get("response_code") in {"000", "001"}
             print(f"SALE sequence={sequence_number} approved={sale_approved}", flush=True)
-            try:
-                recorded = json.loads(state_file.read_text(encoding="utf-8"))
-                for entry in reversed(recorded if isinstance(recorded, list) else []):
-                    if entry.get("sequence_number") == sequence_number:
-                        entry["approved"] = sale_approved
-                        break
-                state_file.write_text(json.dumps(recorded, indent=2) + "\n", encoding="utf-8")
-            except (OSError, json.JSONDecodeError):
-                pass
+            if not sequence_rejected:
+                with STATE_LOCK:
+                    try:
+                        recorded = json.loads(state_file.read_text(encoding="utf-8"))
+                        for entry in reversed(recorded if isinstance(recorded, list) else []):
+                            if entry.get("sequence_number") == sequence_number:
+                                entry["approved"] = sale_approved
+                                entry["tid"] = tid
+                                break
+                        state_file.write_text(json.dumps(recorded, indent=2) + "\n", encoding="utf-8")
+                    except (OSError, json.JSONDecodeError):
+                        pass
         except socket.timeout:
             print(f"Response: timeout for sequence={sequence_number}", flush=True)
         except OSError as exc:
@@ -482,7 +681,13 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
                 f"Response: socket error for sequence={sequence_number}: {exc}",
                 flush=True,
             )
-        sale_results.append((sequence_number, sale_approved))
+        if not sequence_rejected:
+            sale_results.append((sequence_number, sale_approved))
+            save_next_sale_numbers(
+                tid,
+                sequence_number,
+                increment_batch=increment_batch_per_sale,
+            )
 
         if attempt != nof_trx - 1:
             time.sleep(delay_seconds)
@@ -492,7 +697,7 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
         return sale_results
 
     print(
-        f"Waiting {CLOSE_BATCH_DELAY_SECONDS}s after the last sale before CLOSE BATCH",
+        f"Waiting {close_batch_delay_seconds}s after the last sale before CLOSE BATCH",
         flush=True,
     )
     time.sleep(close_batch_delay_seconds)
@@ -516,25 +721,36 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
         batches_to_close,
         start=1,
     ):
-        close_sequence, close_transmission = reserve_message_numbers(state_file, initial_sequence_number, initial_transmission_number, record=False)
+        close_sequence, close_transmission = reserve_message_numbers(
+            state_file,
+            initial_sequence_number,
+            initial_transmission_number,
+            record=False,
+            tid=tid,
+        )
         close_sequence = (
             f"{close_sequence[:3]}{sale_sequence[3:6]}{close_sequence[6:]}"
         )
         print(
-            f"[{close_attempt:03d}/{close_count}] Closing batch={sale_sequence[3:6]} "
+            f"[{close_attempt:03d}/{close_count}] "
+            f"Closing batch=1{sale_sequence[3:6]} "
+            f"rcncltPrdId={sale_sequence[6:9]} "
             f"approved_sales={approved_count} amount={approved_count * int(amount)}",
             flush=True,
         )
         close_requests.append(
-            (close_attempt, close_transmission, close_sequence, approved_count)
+            (
+                close_attempt,
+                close_transmission,
+                close_sequence,
+                approved_count,
+                sale_sequence,
+            )
         )
 
-    start_barrier = threading.Barrier(len(close_requests))
-
-    def send_prepared_close(request: tuple[int, str, str, int]) -> None:
-        _, transmission_number, sequence_number, sale_count = request
-        start_barrier.wait()
-        send_close_batch(
+    def send_prepared_close(request: tuple[int, str, str, int, str]) -> bool:
+        _, transmission_number, sequence_number, sale_count, sale_sequence = request
+        closed = send_close_batch(
             host,
             port,
             timeout,
@@ -542,17 +758,60 @@ def send_packets(host: str, port: int, timeout: float, *, state_file=STATE_FILE,
             sequence_number,
             sale_count, tid, amount,
         )
-
-    print(f"Sending all {len(close_requests)} CLOSE BATCH requests together", flush=True)
-    with ThreadPoolExecutor(max_workers=len(close_requests)) as executor:
-        futures = {
-            executor.submit(send_prepared_close, request): request
-            for request in close_requests
-        }
-        for future in as_completed(futures):
-            close_attempt, _, _, _ = futures[future]
+        if closed:
             try:
-                future.result()
+                removed = remove_pending_sale(
+                    state_file,
+                    sale_sequence,
+                    tid,
+                )
+                if not removed:
+                    print(
+                        f"Could not find closed SALE TID={tid} "
+                        f"sequence={sale_sequence} in {state_file}",
+                        flush=True,
+                    )
+            except (OSError, json.JSONDecodeError):
+                print(
+                    f"Could not remove closed SALE TID={tid} "
+                    f"sequence={sale_sequence} from {state_file}",
+                    flush=True,
+                )
+        return closed
+
+    if parallel_close_batches:
+        start_barrier = threading.Barrier(len(close_requests))
+
+        def send_parallel_close(request: tuple[int, str, str, int, str]) -> bool:
+            start_barrier.wait()
+            return send_prepared_close(request)
+
+        print(f"Sending all {len(close_requests)} CLOSE BATCH requests together", flush=True)
+        with ThreadPoolExecutor(max_workers=len(close_requests)) as executor:
+            futures = {
+                executor.submit(send_parallel_close, request): request
+                for request in close_requests
+            }
+            for future in as_completed(futures):
+                close_attempt, _, _, _, _ = futures[future]
+                try:
+                    future.result()
+                except socket.timeout:
+                    print(
+                        f"CLOSE BATCH [{close_attempt:03d}] response: timeout",
+                        flush=True,
+                    )
+                except OSError as exc:
+                    print(
+                        f"CLOSE BATCH [{close_attempt:03d}] response: socket error: {exc}",
+                        flush=True,
+                    )
+    else:
+        print(f"Sending {len(close_requests)} CLOSE BATCH requests sequentially for TID={tid}", flush=True)
+        for request in close_requests:
+            close_attempt, _, _, _, _ = request
+            try:
+                send_prepared_close(request)
             except socket.timeout:
                 print(
                     f"CLOSE BATCH [{close_attempt:03d}] response: timeout",

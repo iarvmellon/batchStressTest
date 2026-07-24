@@ -1,19 +1,54 @@
 """Configurable sales and batch-closing runner."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
+import socket
 import time
 
-from send_packets import STATE_FILE, reserve_message_numbers, send_close_batch, send_packets
+from send_packets import (
+    STATE_FILE,
+    remove_pending_sale,
+    reserve_message_numbers,
+    send_close_batch,
+    send_packets,
+)
 INITIAL_SEQUENCE_NUMBER = "0015304720"
 INITIAL_TRANSMISSION_NUMBER = "70"
 
 HOST = "10.1.110.84"
 PORT = 28420
 TIMEOUT = 5.0
-TID = "00000006"
+TIDS = ["00000006",\
+       "00003981",\
+       "00003451",\
+       "00003461",\
+       "00003471",\
+       "00003491",\
+       "00003511",\
+       "00003611",\
+       "00003612",\
+       "00003621",\
+       "00003622",\
+       "00003631",\
+       "00003632",\
+       "00004111",\
+       "00003691",\
+       "00003701",\
+       "00003711",\
+       "00003741",\
+       "00003751",\
+       "00004062",\
+       "00004071",\
+       "00003371",\
+       "00003372",\
+       "00003381",\
+       "00003391",\
+       "00003392",\
+       "00003402",\
+       "00003431",\
+       "00003441"]
 AMOUNT = "0001"
-TRANSACTION_COUNT = 355
+TRANSACTION_COUNT = 30
 INCREMENT_BATCH_PER_SALE = True
 STATE = Path(STATE_FILE)
 
@@ -42,8 +77,11 @@ def close_batches(host, port, timeout, tid, amount, delay=0.0,
     except (json.JSONDecodeError, OSError) as exc:
         raise RuntimeError(f"State file is empty or invalid: {STATE}") from exc
     history = state_data if isinstance(state_data, list) else state_data.get("history", [])
-    sales = [(entry["sequence_number"], entry.get("approved", False))
-             for entry in history]
+    sales = [
+        (entry["sequence_number"], entry.get("approved", False))
+        for entry in history
+        if entry.get("tid") == tid
+    ]
     grouped = {}
     for sale_sequence, approved in sales:
         batch = sale_sequence[3:6]
@@ -56,7 +94,7 @@ def close_batches(host, port, timeout, tid, amount, delay=0.0,
     for sale_sequence, approved_count in grouped.values():
         sequence, transmission = reserve_message_numbers(
             STATE, INITIAL_SEQUENCE_NUMBER, INITIAL_TRANSMISSION_NUMBER,
-            record=False)
+            record=False, tid=tid)
         # Keep the sale's batch field while advancing the close sequence by 10.
         sequence = f"{sequence[:3]}{sale_sequence[3:6]}{sequence[6:]}"
         requests.append((transmission, sequence, approved_count))
@@ -81,21 +119,93 @@ def close_batches(host, port, timeout, tid, amount, delay=0.0,
         history = state_data if isinstance(state_data, list) else state_data.get("history", [])
         remaining = [
             e for e in history
-            if e.get("sequence_number", "")[3:6] not in successful_batches
+            if not (
+                e.get("tid") == tid
+                and e.get("sequence_number", "")[3:6] in successful_batches
+            )
         ]
         STATE.write_text(json.dumps(remaining, indent=2) + "\n", encoding="utf-8")
 
 
 def main():
-    send_sales(HOST, PORT, TIMEOUT, TRANSACTION_COUNT, TID, AMOUNT,
-                       delay=0.1,
-                       increment_batch_per_sale=INCREMENT_BATCH_PER_SALE)
+    print(
+        f"Sending {TRANSACTION_COUNT} sales sequentially for each of "
+        f"{len(TIDS)} TIDs ({len(TIDS) * TRANSACTION_COUNT} total)",
+        flush=True,
+    )
+    sales_by_tid = {}
+    for tid in TIDS:
+        sales_by_tid[tid] = send_sales(
+            HOST,
+            PORT,
+            TIMEOUT,
+            TRANSACTION_COUNT,
+            tid,
+            AMOUNT,
+            delay=0.1,
+            increment_batch_per_sale=INCREMENT_BATCH_PER_SALE,
+        )
+        # time.sleep(1)
 
-    # Allow the final sale response to settle before closing the batch.
     time.sleep(1.0)
-    
-    close_batches(HOST, PORT, TIMEOUT, TID, AMOUNT, delay=1.0,
-                  parallel=True)
+
+    def remove_closed_sale(sale_sequence, tid):
+        remove_pending_sale(STATE, sale_sequence, tid)
+
+    def close_tid(tid, sales):
+        closed = 0
+        for sale_sequence, approved in sales:
+            close_sequence, transmission = reserve_message_numbers(
+                STATE,
+                INITIAL_SEQUENCE_NUMBER,
+                INITIAL_TRANSMISSION_NUMBER,
+                record=False,
+                tid=tid,
+            )
+            close_sequence = (
+                f"{close_sequence[:3]}{sale_sequence[3:6]}{close_sequence[6:]}"
+            )
+            sale_count = int(approved)
+            try:
+                success = send_close_batch(
+                    HOST,
+                    PORT,
+                    TIMEOUT,
+                    transmission,
+                    close_sequence,
+                    sale_count,
+                    tid,
+                    AMOUNT,
+                )
+                if success:
+                    remove_closed_sale(sale_sequence, tid)
+                    closed += 1
+            except socket.timeout:
+                print(f"TID={tid} batch=1{sale_sequence[3:6]}: timeout", flush=True)
+            except OSError as exc:
+                print(
+                    f"TID={tid} batch=1{sale_sequence[3:6]}: socket error: {exc}",
+                    flush=True,
+                )
+        return closed
+
+    print(f"Starting {len(TIDS)} CLOSE BATCH threads", flush=True)
+    with ThreadPoolExecutor(max_workers=len(TIDS)) as executor:
+        futures = {
+            executor.submit(close_tid, tid, sales): tid
+            for tid, sales in sales_by_tid.items()
+        }
+        for future in as_completed(futures):
+            tid = futures[future]
+            try:
+                closed = future.result()
+                print(
+                    f"TID={tid} CLOSE completed: "
+                    f"closed={closed}, remaining={TRANSACTION_COUNT - closed}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"TID={tid} CLOSE worker failed: {exc}", flush=True)
 
 
 if __name__ == "__main__":
